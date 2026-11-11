@@ -1,0 +1,74 @@
+name: xwatch
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: xwatch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # 每轮把 data/ 目录存成新 cache，下一轮用 restore-keys 取回（state.json 里是已见 id）
+      - name: Restore state
+        uses: actions/cache/restore@v4
+        with:
+          path: data
+          key: xwatch-state-${{ github.run_id }}
+          restore-keys: |
+            xwatch-state-
+
+      - name: Seed state on first run
+        env:
+          X_STATE: ${{ secrets.X_STATE }}
+        run: |
+          mkdir -p data
+          if [ ! -f data/state.json ] && [ -n "$X_STATE" ]; then
+            printf '%s' "$X_STATE" > data/state.json
+            echo "state seeded from secret"
+          fi
+
+      - name: Write config.json from secret
+        env:
+          X_CONFIG: ${{ secrets.X_CONFIG }}
+        run: printf '%s' "$X_CONFIG" > config.json
+
+      - name: Cache playwright chromium
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: pw-chromium-1248
+
+      - name: Install dependencies and browser
+        run: |
+          npm install --no-audit --no-fund
+          npx playwright install --with-deps chromium
+
+      - name: Run one watch cycle
+        env:
+          TZ: Asia/Shanghai
+          WATCH_BROWSER_MODE: launch
+          WATCH_NO_PROXY: "1"
+          WATCH_COOKIES: ${{ secrets.X_COOKIES }}
+        run: node watch.js --once
+
+      - name: Save state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data
+          key: xwatch-state-${{ github.run_id }}
