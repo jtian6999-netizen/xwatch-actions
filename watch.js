@@ -75,13 +75,35 @@ function launchProxy(cfg) {
   return '';
 }
 
+// launch 模式优先用完整 Chrome（Chrome for Testing），不要用 headless shell：
+// Playwright 的 headless shell 更容易被 Cloudflare 判成机器人（页面标题 "Just a moment..."）
+function findFullChrome() {
+  if (process.env.CHROME_PATH) return process.env.CHROME_PATH;
+  const bases = [process.env.PLAYWRIGHT_BROWSERS_PATH,
+    path.join(process.env.HOME || process.env.USERPROFILE || '', '.cache', 'ms-playwright'),
+    path.join(process.env.LOCALAPPDATA || '', 'ms-playwright')].filter(Boolean);
+  for (const base of bases) {
+    let dirs = [];
+    try { dirs = fs.readdirSync(base); } catch (e) { continue; }
+    for (const d of dirs) {
+      if (!/^chromium-\d+$/.test(d)) continue;
+      for (const rel of [['chrome-linux64', 'chrome'], ['chrome-win64', 'chrome.exe'], ['chrome-linux', 'chrome']]) {
+        const p = path.join(base, d, rel[0], rel[1]);
+        if (fs.existsSync(p)) return p;
+      }
+    }
+  }
+  return undefined;
+}
+
 async function openBrowser(cfg) {
   const mode = browserMode(cfg);
   if (mode === 'launch') {
     const opts = {
       headless: true,
-      executablePath: process.env.CHROME_PATH || undefined,
-      args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--no-first-run', '--no-default-browser-check']
+      executablePath: findFullChrome(),
+      args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--no-first-run',
+        '--no-default-browser-check', '--disable-blink-features=AutomationControlled']
     };
     const proxy = launchProxy(cfg);
     if (proxy) opts.proxy = { server: proxy };
